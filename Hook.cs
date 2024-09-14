@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
-using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -55,7 +54,7 @@ public class Hook: IDisposable
 			this.eventCaptureRestart.Set();
 
 			this.fileMapHookInfo = Kernel32.CreateFileMapping(HFILE.INVALID_HANDLE_VALUE, null,
-				Kernel32.MEM_PROTECTION.PAGE_READWRITE, 0, (uint)Marshal.SizeOf<HookInfo>(),
+				Kernel32.MEM_PROTECTION.PAGE_READWRITE, 0, (uint)Unsafe.SizeOf<HookInfo>(),
 				$"CaptureHook_HookInfo{pid}");
 
 			if (this.fileMapHookInfo.IsInvalid)
@@ -64,7 +63,7 @@ public class Hook: IDisposable
 			}
 
 			this.globalHookInfo = Kernel32.MapViewOfFile(this.fileMapHookInfo, Kernel32.FILE_MAP.FILE_MAP_ALL_ACCESS, 0,
-				0, Marshal.SizeOf<HookInfo>());
+				0, Unsafe.SizeOf<HookInfo>());
 		}
 		catch (Exception)
 		{
@@ -140,7 +139,7 @@ public class Hook: IDisposable
 		HWND rootWindow = User32.GetAncestor(windowHandle, User32.GetAncestorFlag.GA_ROOT);
 
 		this.sharedMemoryFile = Kernel32.CreateFileMapping(HFILE.INVALID_HANDLE_VALUE, null,
-			Kernel32.MEM_PROTECTION.PAGE_READWRITE, 0, (uint)Marshal.SizeOf<SharedTextureData>(),
+			Kernel32.MEM_PROTECTION.PAGE_READWRITE, 0, (uint)Unsafe.SizeOf<SharedTextureData>(),
 			$"CaptureHook_Texture_{rootWindow.DangerousGetHandle()}_{++this.sharedMemoryIdCounter}");
 
 		if (this.sharedMemoryFile.IsInvalid)
@@ -149,7 +148,7 @@ public class Hook: IDisposable
 		}
 
 		this.SharedMemoryInfo = Kernel32.MapViewOfFile(this.sharedMemoryFile, Kernel32.FILE_MAP.FILE_MAP_ALL_ACCESS, 0,
-			0, Marshal.SizeOf<SharedTextureData>());
+			0, Unsafe.SizeOf<SharedTextureData>());
 
 		data = (SharedTextureData*)this.SharedMemoryInfo;
 		data->tex_handle = ((UIntPtr)handle).ToUInt32();
@@ -161,7 +160,7 @@ public class Hook: IDisposable
 		this.GlobalHookInfo->format = format;
 		this.GlobalHookInfo->flip = flip ? (byte)1 : (byte)0;
 		this.GlobalHookInfo->map_id = this.sharedMemoryIdCounter;
-		this.GlobalHookInfo->map_size = (uint)Marshal.SizeOf<SharedTextureData>();
+		this.GlobalHookInfo->map_size = (uint)Unsafe.SizeOf<SharedTextureData>();
 		this.GlobalHookInfo->cx = cx;
 		this.GlobalHookInfo->cy = cy;
 		this.GlobalHookInfo->UNUSED_base_cx = cx;
@@ -179,7 +178,7 @@ public class Hook: IDisposable
 		uint format, bool flip, IntPtr windowHandle)
 	{
 		uint textureSize = cy * pitch;
-		uint alignedHeader = ((uint)Marshal.SizeOf<SharedMemoryData>() + (32u - 1u)) & ~(32u - 1u);
+		uint alignedHeader = ((uint)Unsafe.SizeOf<SharedMemoryData>() + (32u - 1u)) & ~(32u - 1u);
 		uint alignedTexture = (textureSize + (32u - 1u)) & ~(32u - 1u);
 		uint totalSize = alignedHeader + alignedTexture * 2u + 32u;
 
@@ -204,7 +203,7 @@ public class Hook: IDisposable
 		alignedPosition &= ~(32u - 1u);
 		alignedPosition -= (uint)data;
 
-		if (alignedPosition < Marshal.SizeOf<SharedMemoryData>())
+		if (alignedPosition < Unsafe.SizeOf<SharedMemoryData>())
 		{
 			alignedPosition += 32;
 		}
