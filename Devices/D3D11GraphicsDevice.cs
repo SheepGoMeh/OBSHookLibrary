@@ -36,11 +36,6 @@ public class D3D11GraphicsDevice(IntPtr deviceHandle): IGraphicsDevice
 		return new D3D11GraphicsResource(texture);
 	}
 
-	public void Barrier(IGraphicsResource resource)
-	{
-		// No barrier required for D3D11
-	}
-
 	public MapResult MapResource(IGraphicsResource resource, int subresource = 0) =>
 		this.device.ImmediateContext.Map(((D3D11GraphicsResource)resource).Resource, subresource, MapMode.Read,
 			MapFlags.None, out MappedSubresource mappedSubresource).Success

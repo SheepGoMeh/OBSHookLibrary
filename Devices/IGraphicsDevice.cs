@@ -16,12 +16,6 @@ public interface IGraphicsDevice
 	public IGraphicsResource? CreateTexture(uint width, uint height, uint format, bool shared = false);
 
 	/// <summary>
-	/// Applies a barrier before or after a copy operation.
-	/// </summary>
-	/// <param name="resource">Resource implementing <see cref="IGraphicsResource"/>.</param>
-	public void Barrier(IGraphicsResource resource);
-
-	/// <summary>
 	/// Maps resource for CPU access.
 	/// </summary>
 	/// <param name="resource">Resource implementing <see cref="IGraphicsResource"/>.</param>
