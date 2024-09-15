@@ -5,7 +5,7 @@ namespace Sheep.OBSHookLibrary.Devices;
 /// <summary>
 /// Graphics resource interface.
 /// </summary>
-public interface IGraphicsResource: IDisposable
+public interface IGraphicsTexture: IDisposable
 {
 	/// <summary>
 	/// Texture format.

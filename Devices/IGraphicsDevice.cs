@@ -12,35 +12,35 @@ public interface IGraphicsDevice
 	/// <param name="height">Texture height.</param>
 	/// <param name="format">Texture format.</param>
 	/// <param name="shared">Whether the texture is shared.</param>
-	/// <returns><see cref="IGraphicsResource"/> if successful, null if not.</returns>
-	public IGraphicsResource? CreateTexture(uint width, uint height, uint format, bool shared = false);
+	/// <returns><see cref="IGraphicsTexture"/> if successful, null if not.</returns>
+	public IGraphicsTexture? CreateTexture(uint width, uint height, uint format, bool shared = false);
 
 	/// <summary>
 	/// Maps resource for CPU access.
 	/// </summary>
-	/// <param name="resource">Resource implementing <see cref="IGraphicsResource"/>.</param>
+	/// <param name="texture">Resource implementing <see cref="IGraphicsTexture"/>.</param>
 	/// <param name="subresource">Subresource if the texture is multisampled.</param>
 	/// <returns><see cref="MapResult"/> containing information of success, row pitch and data pointer.</returns>
-	public MapResult MapResource(IGraphicsResource resource, int subresource);
+	public MapResult MapResource(IGraphicsTexture texture, int subresource);
 
 	/// <summary>
 	/// Unmaps resource.
 	/// </summary>
-	/// <param name="resource">Resource implementing <see cref="IGraphicsResource"/>.</param>
+	/// <param name="texture">Resource implementing <see cref="IGraphicsTexture"/>.</param>
 	/// <param name="subresource">Subresource if the texture is multisampled.</param>
-	public void UnmapResource(IGraphicsResource resource, int subresource);
+	public void UnmapResource(IGraphicsTexture texture, int subresource);
 
 	/// <summary>
 	/// Resolves subresource and copies data from one resource to the other.
 	/// </summary>
-	/// <param name="sourceResource">Source resource implementing <see cref="IGraphicsResource"/>.</param>
-	/// <param name="destinationResource">Destination resource implementing <see cref="IGraphicsResource"/>.</param>
-	public void ResolveSubresource(IGraphicsResource sourceResource, IGraphicsResource destinationResource);
+	/// <param name="sourceTexture">Source resource implementing <see cref="IGraphicsTexture"/>.</param>
+	/// <param name="destinationTexture">Destination resource implementing <see cref="IGraphicsTexture"/>.</param>
+	public void ResolveSubresource(IGraphicsTexture sourceTexture, IGraphicsTexture destinationTexture);
 
 	/// <summary>
 	/// Copies data from one resource to the other.
 	/// </summary>
-	/// <param name="sourceResource">Source resource implementing <see cref="IGraphicsResource"/>.</param>
-	/// <param name="destinationResource">Destination resource implementing <see cref="IGraphicsResource"/>.</param>
-	public void CopyResource(IGraphicsResource sourceResource, IGraphicsResource destinationResource);
+	/// <param name="sourceTexture">Source resource implementing <see cref="IGraphicsTexture"/>.</param>
+	/// <param name="destinationTexture">Destination resource implementing <see cref="IGraphicsTexture"/>.</param>
+	public void CopyResource(IGraphicsTexture sourceTexture, IGraphicsTexture destinationTexture);
 }

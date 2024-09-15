@@ -10,8 +10,8 @@ public class Capture: IDisposable
 	private bool usingSharedTexture;
 	private bool multisampled;
 	private unsafe SharedTextureData* sharedTextureData;
-	private IGraphicsResource? sharedTexture;
-	private readonly IGraphicsResource?[] copySurfaces = new IGraphicsResource?[Hook.NumberOfBuffers];
+	private IGraphicsTexture? sharedTexture;
+	private readonly IGraphicsTexture?[] copySurfaces = new IGraphicsTexture?[Hook.NumberOfBuffers];
 	private readonly bool[] textureReady = new bool[Hook.NumberOfBuffers];
 	private readonly bool[] textureMapped = new bool[Hook.NumberOfBuffers];
 	private uint pitch;
@@ -35,7 +35,7 @@ public class Capture: IDisposable
 		{
 			this.usingSharedTexture = true;
 
-			IGraphicsResource? texture = device.CreateTexture(width, height, format, true);
+			IGraphicsTexture? texture = device.CreateTexture(width, height, format, true);
 
 			if (texture == null)
 			{
@@ -51,7 +51,7 @@ public class Capture: IDisposable
 
 		for (int i = 0; i < Hook.NumberOfBuffers; ++i)
 		{
-			IGraphicsResource? texture = device.CreateTexture(width, height, format);
+			IGraphicsTexture? texture = device.CreateTexture(width, height, format);
 
 			if (texture == null)
 			{
@@ -100,19 +100,19 @@ public class Capture: IDisposable
 		}
 	}
 
-	public void CaptureImplementationSharedTexture(IGraphicsDevice device, IGraphicsResource resource)
+	public void CaptureImplementationSharedTexture(IGraphicsDevice device, IGraphicsTexture texture)
 	{
 		if (this.multisampled)
 		{
-			device.ResolveSubresource(resource, this.sharedTexture!);
+			device.ResolveSubresource(texture, this.sharedTexture!);
 		}
 		else
 		{
-			device.CopyResource(resource, this.sharedTexture!);
+			device.CopyResource(texture, this.sharedTexture!);
 		}
 	}
 
-	public void CaptureImplementationSharedMemory(IGraphicsDevice device, IGraphicsResource resource)
+	public void CaptureImplementationSharedMemory(IGraphicsDevice device, IGraphicsTexture texture)
 	{
 		int nextTexture = (this.currentTexture + 1) % Hook.NumberOfBuffers;
 
@@ -143,11 +143,11 @@ public class Capture: IDisposable
 
 			if (this.multisampled)
 			{
-				device.ResolveSubresource(resource, this.copySurfaces[this.currentTexture]!);
+				device.ResolveSubresource(texture, this.copySurfaces[this.currentTexture]!);
 			}
 			else
 			{
-				device.CopyResource(resource, this.copySurfaces[this.currentTexture]!);
+				device.CopyResource(texture, this.copySurfaces[this.currentTexture]!);
 			}
 
 			this.textureReady[this.currentTexture] = true;
@@ -156,7 +156,7 @@ public class Capture: IDisposable
 		this.currentTexture = nextTexture;
 	}
 
-	public void CaptureImplementationFrame(IGraphicsDevice device, IGraphicsResource resource)
+	public void CaptureImplementationFrame(IGraphicsDevice device, IGraphicsTexture texture)
 	{
 		if (!this.hook.CaptureReady())
 		{
@@ -165,15 +165,15 @@ public class Capture: IDisposable
 
 		if (this.usingSharedTexture)
 		{
-			this.CaptureImplementationSharedTexture(device, resource);
+			this.CaptureImplementationSharedTexture(device, texture);
 		}
 		else
 		{
-			this.CaptureImplementationSharedMemory(device, resource);
+			this.CaptureImplementationSharedMemory(device, texture);
 		}
 	}
 
-	public void Present(IGraphicsDevice device, IGraphicsResource texture, IntPtr windowHandle)
+	public void Present(IGraphicsDevice device, IGraphicsTexture texture, IntPtr windowHandle)
 	{
 		unsafe
 		{
