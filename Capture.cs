@@ -22,7 +22,10 @@ public class Capture: IDisposable
 	public Capture()
 	{
 		this.hook = new Hook();
-		this.hook.Init();
+		if (!this.hook.Init())
+		{
+			throw new Exception("Failed to initialize hook!");
+		}
 	}
 
 	public unsafe bool CaptureImplementationInit(IGraphicsDevice device, IntPtr windowHandle, uint width, uint height,
