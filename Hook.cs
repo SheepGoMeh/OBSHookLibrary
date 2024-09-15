@@ -33,7 +33,6 @@ public class Hook: IDisposable
 		string mutexName = $"graphics_hook_dup_mutex{pid}";
 		if (!(this.hookMutex = Kernel32.OpenMutex(ACCESS_MASK.SYNCHRONIZE, false, mutexName)).IsInvalid)
 		{
-			// throw new Exception("Mutex already opened, aborting!");
 			this.hookMutex?.Dispose();
 			return false;
 		}
@@ -65,9 +64,8 @@ public class Hook: IDisposable
 			this.globalHookInfo = Kernel32.MapViewOfFile(this.fileMapHookInfo, Kernel32.FILE_MAP.FILE_MAP_ALL_ACCESS, 0,
 				0, Unsafe.SizeOf<HookInfo>());
 		}
-		catch (Exception)
+		catch
 		{
-			// Service.PluginLog.Error($"Error occured: {ex.Message}");
 			return false;
 		}
 
