@@ -5,7 +5,7 @@ using Vanara.PInvoke;
 
 namespace Sheep.OBSHookLibrary;
 
-public unsafe class ThreadData
+internal unsafe class ThreadData
 {
 	public readonly Kernel32.CRITICAL_SECTION[] Mutexes = new Kernel32.CRITICAL_SECTION[3];
 	public Kernel32.CRITICAL_SECTION DataMutex;

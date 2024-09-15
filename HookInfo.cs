@@ -3,7 +3,7 @@
 namespace Sheep.OBSHookLibrary;
 
 [StructLayout(LayoutKind.Sequential, Pack = 8)]
-unsafe public struct HookInfo
+internal unsafe struct HookInfo
 {
 	/* hook version */
 	public uint hook_ver_major;

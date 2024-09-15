@@ -1,6 +1,6 @@
 ﻿namespace Sheep.OBSHookLibrary;
 
-public enum CaptureType: uint
+internal enum CaptureType: uint
 {
 	CaptureTypeMemory,
 	CaptureTypeTexture,

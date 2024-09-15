@@ -3,7 +3,7 @@
 namespace Sheep.OBSHookLibrary;
 
 [StructLayout(LayoutKind.Sequential, Pack = 8)]
-public struct SharedTextureData
+internal struct SharedTextureData
 {
 	public uint tex_handle;
 }

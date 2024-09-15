@@ -8,7 +8,7 @@ using Vanara.PInvoke;
 
 namespace Sheep.OBSHookLibrary;
 
-public class Hook: IDisposable
+internal class Hook: IDisposable
 {
 	public const int NumberOfBuffers = 3;
 	private uint sharedMemoryIdCounter;
