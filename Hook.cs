@@ -120,12 +120,12 @@ internal class Hook: IDisposable
 	public bool CaptureActive() => this.active;
 
 	public bool CaptureStopped() => this.eventCaptureStop != null &&
-	                                Kernel32.WaitForSingleObject(this.eventCaptureStop, 0) ==
-	                                Kernel32.WAIT_STATUS.WAIT_OBJECT_0;
+									Kernel32.WaitForSingleObject(this.eventCaptureStop, 0) ==
+									Kernel32.WAIT_STATUS.WAIT_OBJECT_0;
 
 	public bool CaptureRestarted() => this.eventCaptureRestart != null &&
-	                                  Kernel32.WaitForSingleObject(this.eventCaptureRestart, 0) ==
-	                                  Kernel32.WAIT_STATUS.WAIT_OBJECT_0;
+									  Kernel32.WaitForSingleObject(this.eventCaptureRestart, 0) ==
+									  Kernel32.WAIT_STATUS.WAIT_OBJECT_0;
 
 	public bool CaptureShouldStop() => this.CaptureActive() && this.CaptureStopped() && !this.CaptureAlive();
 
@@ -261,7 +261,7 @@ internal class Hook: IDisposable
 		];
 
 		while (Kernel32.WaitForMultipleObjects(events, false, Kernel32.INFINITE) ==
-		       Kernel32.WAIT_STATUS.WAIT_OBJECT_0)
+			   Kernel32.WAIT_STATUS.WAIT_OBJECT_0)
 		{
 			if (this.threadData.CopyThreadCancellationTokenSource!.IsCancellationRequested)
 			{
