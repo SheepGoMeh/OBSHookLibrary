@@ -48,7 +48,7 @@ public sealed class Capture: IDisposable
 		{
 			try
 			{
-				this.session = this.hook.ForceSharedMemory
+				this.session = this.hook.ForceSharedMemory || !device.SupportsSharedTexture
 					? new SharedMemorySession(this.hook, device, texture, windowHandle)
 					: new SharedTextureSession(this.hook, device, texture, windowHandle);
 				this.sessionShape = (texture.Width, texture.Height, texture.Format);

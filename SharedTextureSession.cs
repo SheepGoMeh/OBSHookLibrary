@@ -36,6 +36,7 @@ internal sealed unsafe class SharedTextureSession: ICaptureSession
 
 	public void Dispose()
 	{
+		this.device.WaitIdle();
 		this.memory?.Dispose();
 		this.sharedTexture?.Dispose();
 	}

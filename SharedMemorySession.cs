@@ -103,6 +103,7 @@ internal sealed unsafe class SharedMemorySession: ICaptureSession
 	{
 		// Stop copying before anything it reads from goes away
 		this.copier?.Dispose();
+		this.device.WaitIdle();
 
 		for (int i = 0; i < BufferCount; ++i)
 		{

@@ -22,6 +22,8 @@ public sealed class D3D11GraphicsDevice: IGraphicsDevice
 		this.context = this.device.ImmediateContext;
 	}
 
+	public bool SupportsSharedTexture => true;
+
 	public IGraphicsTexture CreateTexture(uint width, uint height, uint format, bool shared = false)
 	{
 		using ID3D11Texture2D texture = this.device.CreateTexture2D(
@@ -60,6 +62,11 @@ public sealed class D3D11GraphicsDevice: IGraphicsDevice
 		{
 			this.context.CopyResource(Unwrap(destination), Unwrap(source));
 		}
+	}
+
+	// Direct3D 11 defers destroying resources until the GPU is done with them
+	public void WaitIdle()
+	{
 	}
 
 	private static ID3D11Texture2D Unwrap(IGraphicsTexture texture) => ((D3D11GraphicsTexture)texture).Texture;
