@@ -2,6 +2,6 @@
 
 internal enum CaptureType: uint
 {
-	CaptureTypeMemory,
-	CaptureTypeTexture,
+	Memory,
+	Texture,
 }

@@ -10,9 +10,7 @@
         <RootNamespace>Sheep.OBSHookLibrary</RootNamespace>
     </PropertyGroup>
     <ItemGroup>
-        <PackageReference Include="Vanara.PInvoke.User32" Version="5.0.7" />
         <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
-        <PackageReference Include="Vortice.Direct3D12" Version="3.8.3" />
     </ItemGroup>
 
 </Project>

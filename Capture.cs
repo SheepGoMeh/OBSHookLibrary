@@ -4,171 +4,77 @@ using Sheep.OBSHookLibrary.Devices;
 
 namespace Sheep.OBSHookLibrary;
 
-public class Capture: IDisposable
+/// <summary>
+/// Exposes frames to OBS game capture, call <see cref="TryInit"/> once and <see cref="Present"/> every frame.
+/// </summary>
+public sealed class Capture: IDisposable
 {
-	private readonly Hook hook;
-	private bool usingSharedTexture;
-	private unsafe SharedTextureData* sharedTextureData;
-	private IGraphicsTexture? sharedTexture;
-	private readonly IGraphicsTexture?[] copySurfaces = new IGraphicsTexture?[Hook.NumberOfBuffers];
-	private readonly bool[] textureReady = new bool[Hook.NumberOfBuffers];
-	private readonly bool[] textureMapped = new bool[Hook.NumberOfBuffers];
-	private uint pitch;
-	private unsafe SharedMemoryData* sharedMemoryData;
-	private int currentTexture;
-	private int copyWait;
+	private Hook? hook;
+	private ICaptureSession? session;
 
-	public Capture()
+	/// <summary>
+	/// Whether the hook lock is held and frames can be captured.
+	/// </summary>
+	public bool IsHooked => this.hook != null;
+
+	/// <summary>
+	/// Acquires the hook lock, can be retried until it succeeds.
+	/// </summary>
+	/// <returns>False if another graphics hook, such as OBS's own, already owns this process.</returns>
+	public bool TryInit() => (this.hook ??= Hook.TryCreate()) != null;
+
+	/// <summary>
+	/// Starts, stops and feeds the capture as OBS requests, does nothing until <see cref="TryInit"/> succeeds.
+	/// </summary>
+	/// <param name="device">Device the texture belongs to.</param>
+	/// <param name="texture">Frame to capture.</param>
+	/// <param name="windowHandle">Window OBS is capturing.</param>
+	public void Present(IGraphicsDevice device, IGraphicsTexture texture, IntPtr windowHandle)
 	{
-		this.hook = new Hook();
-		if (!this.hook.Init())
-		{
-			throw new Exception("Failed to initialize hook!");
-		}
-	}
-
-	public unsafe bool CaptureImplementationInit(IGraphicsDevice device, IntPtr windowHandle, uint width, uint height,
-		uint format)
-	{
-		if (this.hook.GlobalHookInfo->force_shmem == 0)
-		{
-			this.usingSharedTexture = true;
-
-			IGraphicsTexture texture = device.CreateTexture(width, height, format, true);
-
-			this.sharedTexture = texture;
-			return this.hook.CaptureInitSharedTexture(ref this.sharedTextureData, width, height,
-				format, false, texture.SharedHandle, windowHandle);
-		}
-
-		this.usingSharedTexture = false;
-
-		for (int i = 0; i < Hook.NumberOfBuffers; ++i)
-		{
-			IGraphicsTexture texture = device.CreateTexture(width, height, format);
-
-			this.copySurfaces[i] = texture;
-		}
-
-		if (device.TryMap(this.copySurfaces[0]!, out _, out this.pitch))
-		{
-			device.Unmap(this.copySurfaces[0]!);
-		}
-
-		return this.hook.CaptureInitSharedMemory(ref this.sharedMemoryData, width, height, this.pitch,
-			format, false, windowHandle);
-	}
-
-	public void CaptureImplementationFree(IGraphicsDevice device)
-	{
-		this.hook.CaptureFree();
-
-		if (this.usingSharedTexture)
-		{
-			this.sharedTexture?.Dispose();
-		}
-		else
-		{
-			for (int i = 0; i < Hook.NumberOfBuffers; ++i)
-			{
-				if (this.copySurfaces[i] == null)
-				{
-					continue;
-				}
-
-				if (this.textureMapped[i])
-				{
-					device.Unmap(this.copySurfaces[i]!);
-				}
-
-				this.copySurfaces[i]!.Dispose();
-			}
-		}
-	}
-
-	public void CaptureImplementationSharedTexture(IGraphicsDevice device, IGraphicsTexture texture)
-	{
-		device.Copy(texture, this.sharedTexture!);
-	}
-
-	public void CaptureImplementationSharedMemory(IGraphicsDevice device, IGraphicsTexture texture)
-	{
-		int nextTexture = (this.currentTexture + 1) % Hook.NumberOfBuffers;
-
-		if (this.textureReady[nextTexture])
-		{
-			this.textureReady[nextTexture] = false;
-
-			if (device.TryMap(this.copySurfaces[nextTexture]!, out IntPtr data, out _))
-			{
-				this.textureMapped[nextTexture] = true;
-				this.hook.SharedMemoryCopyData((uint)nextTexture, data);
-			}
-		}
-
-		if (this.copyWait < Hook.NumberOfBuffers - 1)
-		{
-			this.copyWait++;
-		}
-		else
-		{
-			if (this.hook.SharedMemoryTextureDataLock(this.currentTexture))
-			{
-				device.Unmap(this.copySurfaces[this.currentTexture]!);
-				this.textureMapped[this.currentTexture] = false;
-				this.hook.SharedMemoryTextureUnlock(this.currentTexture);
-			}
-
-			device.Copy(texture, this.copySurfaces[this.currentTexture]!);
-
-			this.textureReady[this.currentTexture] = true;
-		}
-
-		this.currentTexture = nextTexture;
-	}
-
-	public void CaptureImplementationFrame(IGraphicsDevice device, IGraphicsTexture texture)
-	{
-		if (!this.hook.CaptureReady())
+		if (this.hook == null)
 		{
 			return;
 		}
 
-		if (this.usingSharedTexture)
+		if (this.session != null && this.hook.ShouldStop())
 		{
-			this.CaptureImplementationSharedTexture(device, texture);
+			this.Free();
 		}
-		else
-		{
-			this.CaptureImplementationSharedMemory(device, texture);
-		}
-	}
 
-	public void Present(IGraphicsDevice device, IGraphicsTexture texture, IntPtr windowHandle)
-	{
-		unsafe
+		if (this.session == null && this.hook.ShouldInit())
 		{
-			if (this.hook.GlobalHookInfo == null)
+			try
 			{
-				return;
+				this.session = this.hook.ForceSharedMemory
+					? new SharedMemorySession(this.hook, device, texture, windowHandle)
+					: new SharedTextureSession(this.hook, device, texture, windowHandle);
+			}
+			catch
+			{
+				// Retry on the next frame
+				this.hook.SignalRestart();
+				throw;
 			}
 		}
 
-		if (this.hook.CaptureShouldStop())
+		if (this.session != null && this.hook.FrameReady())
 		{
-			this.CaptureImplementationFree(device);
+			this.session.Capture(texture);
 		}
+	}
 
-		if (this.hook.CaptureShouldInit())
-		{
-			this.CaptureImplementationInit(device, windowHandle, texture.Width, texture.Height, texture.Format);
-		}
-
-		this.CaptureImplementationFrame(device, texture);
+	private void Free()
+	{
+		this.session?.Dispose();
+		this.session = null;
+		this.hook?.SignalRestart();
 	}
 
 	public void Dispose()
 	{
-		this.hook.Dispose();
+		this.session?.Dispose();
+		this.session = null;
+		this.hook?.Dispose();
+		this.hook = null;
 	}
 }

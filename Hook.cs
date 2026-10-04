@@ -1,397 +1,201 @@
 ﻿using System;
 using System.Diagnostics;
-using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Threading;
-using System.Threading.Tasks;
-
-using Vanara.PInvoke;
 
 namespace Sheep.OBSHookLibrary;
 
-internal class Hook: IDisposable
+/// <summary>
+/// Process wide side of the OBS graphics hook protocol, mirrors obs-studio's graphics-hook.c.
+/// Owns the hook lock, the signals OBS game capture waits on and the hook info it reads.
+/// </summary>
+internal sealed unsafe partial class Hook: IDisposable
 {
-	public const int NumberOfBuffers = 3;
-	private uint sharedMemoryIdCounter;
-	private Kernel32.SafeMutexHandle? hookMutex;
-	private Kernel32.SafeMutexHandle?[] textureMutexes = new Kernel32.SafeMutexHandle?[2];
-	private Kernel32.SafeEventHandle? eventHookInit;
-	private Kernel32.SafeEventHandle? eventHookExit;
-	private Kernel32.SafeEventHandle? eventHookReady;
-	private Kernel32.SafeEventHandle? eventCaptureRestart;
-	private Kernel32.SafeEventHandle? eventCaptureStop;
-	private IntPtr globalHookInfo;
-	public unsafe HookInfo* GlobalHookInfo => (HookInfo*)this.globalHookInfo;
-	private IntPtr SharedMemoryInfo { get; set; }
-	private Kernel32.SafeHSECTION? fileMapHookInfo;
-	private Kernel32.SafeHSECTION? sharedMemoryFile;
-	private volatile bool active;
-	private readonly ThreadData threadData = new();
+	private const uint VersionMajor = 1;
+	private const uint VersionMinor = 8;
+	private const long KeepAliveCheckInterval = 5_000_000_000;
+	private const uint GaRoot = 2;
 
-	public bool Init()
+	private readonly Mutex hookLock;
+	private readonly EventWaitHandle restartEvent;
+	private readonly EventWaitHandle stopEvent;
+	private readonly EventWaitHandle readyEvent;
+	private readonly EventWaitHandle exitEvent;
+	private readonly EventWaitHandle initEvent;
+	private readonly SharedMemory hookInfo;
+	private readonly string keepAliveName;
+	private uint mapIdCounter;
+	private long lastKeepAliveCheck;
+	private long lastFrameTime;
+
+	private Hook(Mutex hookLock)
 	{
-		uint pid = (uint)Environment.ProcessId;
-		string mutexName = $"graphics_hook_dup_mutex{pid}";
-		if (!(this.hookMutex = Kernel32.OpenMutex(ACCESS_MASK.SYNCHRONIZE, false, mutexName)).IsInvalid)
-		{
-			this.hookMutex?.Dispose();
-			return false;
-		}
+		int pid = Environment.ProcessId;
+		this.hookLock = hookLock;
+		this.keepAliveName = $"CaptureHook_KeepAlive{pid}";
 
 		try
 		{
-			this.hookMutex = Kernel32.CreateMutex(null, false, mutexName);
-			this.eventHookInit = Kernel32.CreateEvent(null, false, false, $"CaptureHook_Initialize{pid}");
-			this.eventHookExit = Kernel32.CreateEvent(null, false, false, $"CaptureHook_Exit{pid}");
-			this.eventCaptureRestart = Kernel32.CreateEvent(null, false, false, $"CaptureHook_Restart{pid}");
-			this.eventCaptureStop = Kernel32.CreateEvent(null, false, false, $"CaptureHook_Stop{pid}");
-			this.eventHookReady = Kernel32.CreateEvent(null, false, false, $"CaptureHook_HookReady{pid}");
-			this.textureMutexes =
+			this.restartEvent = new EventWaitHandle(false, EventResetMode.AutoReset, $"CaptureHook_Restart{pid}");
+			this.stopEvent = new EventWaitHandle(false, EventResetMode.AutoReset, $"CaptureHook_Stop{pid}");
+			this.readyEvent = new EventWaitHandle(false, EventResetMode.AutoReset, $"CaptureHook_HookReady{pid}");
+			this.exitEvent = new EventWaitHandle(false, EventResetMode.AutoReset, $"CaptureHook_Exit{pid}");
+			this.initEvent = new EventWaitHandle(false, EventResetMode.AutoReset, $"CaptureHook_Initialize{pid}");
+			this.TextureMutexes =
 			[
-				Kernel32.CreateMutex(null, false, $"CaptureHook_TextureMutex1{pid}"),
-				Kernel32.CreateMutex(null, false, $"CaptureHook_TextureMutex2{pid}")
+				new Mutex(false, $"CaptureHook_TextureMutex1{pid}"),
+				new Mutex(false, $"CaptureHook_TextureMutex2{pid}")
 			];
-			this.eventCaptureRestart.Set();
-
-			this.fileMapHookInfo = Kernel32.CreateFileMapping(HFILE.INVALID_HANDLE_VALUE, null,
-				Kernel32.MEM_PROTECTION.PAGE_READWRITE, 0, (uint)Unsafe.SizeOf<HookInfo>(),
-				$"CaptureHook_HookInfo{pid}");
-
-			if (this.fileMapHookInfo.IsInvalid)
-			{
-				throw new ArgumentNullException();
-			}
-
-			this.globalHookInfo = Kernel32.MapViewOfFile(this.fileMapHookInfo, Kernel32.FILE_MAP.FILE_MAP_ALL_ACCESS, 0,
-				0, Unsafe.SizeOf<HookInfo>());
+			this.hookInfo = new SharedMemory($"CaptureHook_HookInfo{pid}", (uint)sizeof(HookInfo));
 		}
 		catch
 		{
-			return false;
+			this.Dispose();
+			throw;
 		}
 
-		return true;
+		this.restartEvent.Set();
 	}
 
-	private static ulong lastTime;
+	public Mutex[] TextureMutexes { get; }
 
-	public unsafe bool CaptureReady()
+	public bool ForceSharedMemory => this.Info->force_shmem != 0;
+
+	private HookInfo* Info => (HookInfo*)this.hookInfo.Pointer;
+
+	/// <summary>
+	/// Acquires the hook lock and sets up the hook.
+	/// </summary>
+	/// <returns>The hook, or null if another graphics hook already owns this process.</returns>
+	public static Hook? TryCreate()
 	{
-		if (!this.CaptureActive())
+		Mutex hookLock;
+		bool createdNew;
+
+		try
 		{
-			return false;
+			hookLock = new Mutex(false, $"graphics_hook_dup_mutex{Environment.ProcessId}", out createdNew);
+		}
+		catch (UnauthorizedAccessException)
+		{
+			return null;
 		}
 
-		if (this.GlobalHookInfo->frame_interval == 0)
+		if (!createdNew)
+		{
+			hookLock.Dispose();
+			return null;
+		}
+
+		return new Hook(hookLock);
+	}
+
+	public bool ShouldInit() => this.restartEvent.WaitOne(0) && this.IsCaptureAlive();
+
+	public bool ShouldStop()
+	{
+		bool alive = true;
+		long now = Now();
+
+		if (now - this.lastKeepAliveCheck > KeepAliveCheckInterval)
+		{
+			alive = this.IsCaptureAlive();
+			this.lastKeepAliveCheck = now;
+		}
+
+		return this.stopEvent.WaitOne(0) || !alive;
+	}
+
+	public bool FrameReady()
+	{
+		long interval = (long)this.Info->frame_interval;
+
+		if (interval == 0)
 		{
 			return true;
 		}
 
-		ulong timestamp = (ulong)Stopwatch.GetTimestamp();
-		ulong elapsed = timestamp - lastTime;
+		long now = Now();
+		long elapsed = now - this.lastFrameTime;
 
-		if (elapsed < this.GlobalHookInfo->frame_interval)
+		if (elapsed < interval)
 		{
 			return false;
 		}
 
-		lastTime = (elapsed > this.GlobalHookInfo->frame_interval * 2)
-			? timestamp
-			: lastTime + this.GlobalHookInfo->frame_interval;
+		this.lastFrameTime = elapsed > interval * 2 ? now : this.lastFrameTime + interval;
 		return true;
 	}
 
-	public bool CaptureAlive()
+	public void SignalRestart() => this.restartEvent.Set();
+
+	/// <summary>
+	/// Creates the shared memory OBS reads the next capture from.
+	/// </summary>
+	public SharedMemory CreateCaptureMemory(IntPtr window, uint size) =>
+		new($"CaptureHook_Texture_{(ulong)GetAncestor(window, GaRoot)}_{++this.mapIdCounter}", size);
+
+	/// <summary>
+	/// Publishes the capture created with <see cref="CreateCaptureMemory"/> and tells OBS it is ready.
+	/// </summary>
+	public void Publish(CaptureType type, IntPtr window, uint cx, uint cy, uint format, uint pitch, uint mapSize)
 	{
-		Kernel32.SafeMutexHandle mutex = Kernel32.OpenMutex(ACCESS_MASK.SYNCHRONIZE, false,
-			$"CaptureHook_KeepAlive{Environment.ProcessId}");
+		HookInfo* info = this.Info;
+		info->hook_ver_major = VersionMajor;
+		info->hook_ver_minor = VersionMinor;
+		info->window = (uint)(nuint)window;
+		info->type = (uint)type;
+		info->format = format;
+		info->flip = 0;
+		info->map_id = this.mapIdCounter;
+		info->map_size = mapSize;
+		info->pitch = pitch;
+		info->cx = cx;
+		info->cy = cy;
+		info->UNUSED_base_cx = cx;
+		info->UNUSED_base_cy = cy;
 
-		if (mutex.IsInvalid)
-		{
-			return false;
-		}
-
-		mutex.Dispose();
-		return true;
+		this.readyEvent.Set();
 	}
 
-	public bool CaptureSignalReady() => this.eventHookReady != null && this.eventHookReady.Set();
-	public bool CaptureSignalRestart() => this.eventCaptureRestart != null && this.eventCaptureRestart.Set();
-
-	public bool CaptureActive() => this.active;
-
-	public bool CaptureStopped() => this.eventCaptureStop != null &&
-									Kernel32.WaitForSingleObject(this.eventCaptureStop, 0) ==
-									Kernel32.WAIT_STATUS.WAIT_OBJECT_0;
-
-	public bool CaptureRestarted() => this.eventCaptureRestart != null &&
-									  Kernel32.WaitForSingleObject(this.eventCaptureRestart, 0) ==
-									  Kernel32.WAIT_STATUS.WAIT_OBJECT_0;
-
-	public bool CaptureShouldStop() => this.CaptureActive() && this.CaptureStopped() && !this.CaptureAlive();
-
-	public bool CaptureShouldInit() => !this.CaptureActive() && !this.CaptureRestarted() && this.CaptureAlive();
-
-	public unsafe bool CaptureInitSharedTexture(ref SharedTextureData* data, uint cx, uint cy, uint format,
-		bool flip, IntPtr handle, IntPtr windowHandle)
+	private bool IsCaptureAlive()
 	{
-		HWND rootWindow = User32.GetAncestor(windowHandle, User32.GetAncestorFlag.GA_ROOT);
-
-		this.sharedMemoryFile = Kernel32.CreateFileMapping(HFILE.INVALID_HANDLE_VALUE, null,
-			Kernel32.MEM_PROTECTION.PAGE_READWRITE, 0, (uint)Unsafe.SizeOf<SharedTextureData>(),
-			$"CaptureHook_Texture_{rootWindow.DangerousGetHandle()}_{++this.sharedMemoryIdCounter}");
-
-		if (this.sharedMemoryFile.IsInvalid)
+		try
 		{
-			return false;
-		}
-
-		this.SharedMemoryInfo = Kernel32.MapViewOfFile(this.sharedMemoryFile, Kernel32.FILE_MAP.FILE_MAP_ALL_ACCESS, 0,
-			0, Unsafe.SizeOf<SharedTextureData>());
-
-		data = (SharedTextureData*)this.SharedMemoryInfo;
-		data->tex_handle = ((UIntPtr)handle).ToUInt32();
-
-		this.GlobalHookInfo->hook_ver_major = 1;
-		this.GlobalHookInfo->hook_ver_minor = 7;
-		this.GlobalHookInfo->window = ((UIntPtr)windowHandle).ToUInt32();
-		this.GlobalHookInfo->type = (uint)CaptureType.CaptureTypeTexture;
-		this.GlobalHookInfo->format = format;
-		this.GlobalHookInfo->flip = flip ? (byte)1 : (byte)0;
-		this.GlobalHookInfo->map_id = this.sharedMemoryIdCounter;
-		this.GlobalHookInfo->map_size = (uint)Unsafe.SizeOf<SharedTextureData>();
-		this.GlobalHookInfo->cx = cx;
-		this.GlobalHookInfo->cy = cy;
-		this.GlobalHookInfo->UNUSED_base_cx = cx;
-		this.GlobalHookInfo->UNUSED_base_cy = cy;
-
-		if (!this.CaptureSignalReady())
-		{
-			return false;
-		}
-
-		return this.active = true;
-	}
-
-	public unsafe bool CaptureInitSharedMemory(ref SharedMemoryData* data, uint cx, uint cy, uint pitch,
-		uint format, bool flip, IntPtr windowHandle)
-	{
-		uint textureSize = cy * pitch;
-		uint alignedHeader = ((uint)Unsafe.SizeOf<SharedMemoryData>() + (32u - 1u)) & ~(32u - 1u);
-		uint alignedTexture = (textureSize + (32u - 1u)) & ~(32u - 1u);
-		uint totalSize = alignedHeader + alignedTexture * 2u + 32u;
-
-		HWND rootWindow = User32.GetAncestor(windowHandle, User32.GetAncestorFlag.GA_ROOT);
-
-		this.sharedMemoryFile = Kernel32.CreateFileMapping(HFILE.INVALID_HANDLE_VALUE, null,
-			Kernel32.MEM_PROTECTION.PAGE_READWRITE, 0, totalSize,
-			$"CaptureHook_Texture_{rootWindow.DangerousGetHandle()}_{++this.sharedMemoryIdCounter}");
-
-		if (this.sharedMemoryFile.IsInvalid)
-		{
-			return false;
-		}
-
-		this.SharedMemoryInfo = Kernel32.MapViewOfFile(this.sharedMemoryFile, Kernel32.FILE_MAP.FILE_MAP_ALL_ACCESS, 0,
-			0, totalSize);
-
-		data = (SharedMemoryData*)this.SharedMemoryInfo;
-
-		uint alignedPosition = (uint)data;
-		alignedPosition += alignedHeader;
-		alignedPosition &= ~(32u - 1u);
-		alignedPosition -= (uint)data;
-
-		if (alignedPosition < Unsafe.SizeOf<SharedMemoryData>())
-		{
-			alignedPosition += 32;
-		}
-
-		data->last_tex = -1;
-		data->tex1_offset = alignedPosition;
-		data->tex2_offset = data->tex1_offset + alignedTexture;
-
-		this.GlobalHookInfo->hook_ver_major = 1;
-		this.GlobalHookInfo->hook_ver_minor = 7;
-		this.GlobalHookInfo->window = ((UIntPtr)windowHandle).ToUInt32();
-		this.GlobalHookInfo->type = (uint)CaptureType.CaptureTypeMemory;
-		this.GlobalHookInfo->format = format;
-		this.GlobalHookInfo->flip = flip ? (byte)1 : (byte)0;
-		this.GlobalHookInfo->map_id = this.sharedMemoryIdCounter;
-		this.GlobalHookInfo->map_size = totalSize;
-		this.GlobalHookInfo->pitch = pitch;
-		this.GlobalHookInfo->cx = cx;
-		this.GlobalHookInfo->cy = cy;
-		this.GlobalHookInfo->UNUSED_base_cx = cx;
-		this.GlobalHookInfo->UNUSED_base_cy = cy;
-
-		this.threadData.Pitch = pitch;
-		this.threadData.Cy = cy;
-		this.threadData.SharedMemoryTextures[0] = ((byte*)this.SharedMemoryInfo) + data->tex1_offset;
-		this.threadData.SharedMemoryTextures[1] = ((byte*)this.SharedMemoryInfo) + data->tex2_offset;
-		this.threadData.CopyEvent = Kernel32.CreateEvent();
-		this.threadData.StopEvent = Kernel32.CreateEvent();
-
-		for (int i = 0; i != NumberOfBuffers; ++i)
-		{
-			Kernel32.InitializeCriticalSection(out this.threadData.Mutexes[i]);
-		}
-
-		Kernel32.InitializeCriticalSection(out this.threadData.DataMutex);
-
-		this.threadData.CopyThreadCancellationTokenSource = new CancellationTokenSource();
-		this.threadData.CopyThread = Task.Run(this.CopyThread, this.threadData.CopyThreadCancellationTokenSource.Token);
-
-		if (!this.CaptureSignalReady())
-		{
-			return false;
-		}
-
-		return this.active = true;
-	}
-
-	private unsafe void CopyThread()
-	{
-		uint pitch = this.threadData.Pitch;
-		uint cy = this.threadData.Cy;
-		int sharedMemoryId = 0;
-		ISyncHandle[] events =
-		[
-			new Kernel32.SafeEventHandle(this.threadData.CopyEvent!.Duplicate()),
-			new Kernel32.SafeEventHandle(this.threadData.StopEvent!.Duplicate())
-		];
-
-		while (Kernel32.WaitForMultipleObjects(events, false, Kernel32.INFINITE) ==
-			   Kernel32.WAIT_STATUS.WAIT_OBJECT_0)
-		{
-			if (this.threadData.CopyThreadCancellationTokenSource!.IsCancellationRequested)
+			if (!Mutex.TryOpenExisting(this.keepAliveName, out Mutex? mutex))
 			{
-				return;
+				return false;
 			}
 
-			Kernel32.EnterCriticalSection(ref this.threadData.DataMutex);
-			Kernel32.LeaveCriticalSection(ref this.threadData.DataMutex);
-
-			if (this.threadData.CurrentTexture >= NumberOfBuffers || this.threadData.CurrentData == null)
-			{
-				continue;
-			}
-
-			Kernel32.EnterCriticalSection(ref this.threadData.Mutexes[this.threadData.CurrentTexture]);
-			int lockId = -1;
-			int nextId = sharedMemoryId == 0 ? 1 : 0;
-
-			Kernel32.WAIT_STATUS waitResult = Kernel32.WaitForSingleObject(this.textureMutexes[sharedMemoryId]!, 0);
-
-			if (waitResult is Kernel32.WAIT_STATUS.WAIT_OBJECT_0 or Kernel32.WAIT_STATUS.WAIT_ABANDONED)
-			{
-				lockId = sharedMemoryId;
-			}
-			else
-			{
-				waitResult = Kernel32.WaitForSingleObject(this.textureMutexes[nextId]!, 0);
-				if (waitResult is Kernel32.WAIT_STATUS.WAIT_OBJECT_0 or Kernel32.WAIT_STATUS.WAIT_ABANDONED)
-				{
-					lockId = nextId;
-				}
-			}
-
-			if (lockId != -1)
-			{
-				Unsafe.CopyBlock(this.threadData.SharedMemoryTextures[lockId], this.threadData.CurrentData, pitch * cy);
-				Kernel32.ReleaseMutex(this.textureMutexes[lockId]!);
-				((SharedMemoryData*)this.SharedMemoryInfo)->last_tex = lockId;
-				sharedMemoryId = lockId == 0 ? 1 : 0;
-			}
-
-			Kernel32.LeaveCriticalSection(ref this.threadData.Mutexes[this.threadData.CurrentTexture]);
+			mutex.Dispose();
+			return true;
 		}
-	}
-
-	public unsafe void SharedMemoryCopyData(uint index, IntPtr data)
-	{
-		Kernel32.EnterCriticalSection(ref this.threadData.DataMutex);
-		this.threadData.CurrentTexture = (int)index;
-		this.threadData.CurrentData = (void*)data;
-		this.threadData.LockedTextures[index] = true;
-		Kernel32.LeaveCriticalSection(ref this.threadData.DataMutex);
-
-		this.threadData.CopyEvent!.Set();
-	}
-
-	public bool SharedMemoryTextureDataLock(int index)
-	{
-		Kernel32.EnterCriticalSection(ref this.threadData.DataMutex);
-		bool locked = this.threadData.LockedTextures[index];
-		Kernel32.LeaveCriticalSection(ref this.threadData.DataMutex);
-
-		if (!locked)
+		catch (UnauthorizedAccessException)
 		{
-			return false;
+			// Exists, but OBS runs elevated
+			return true;
 		}
-
-		Kernel32.EnterCriticalSection(ref this.threadData.Mutexes[index]);
-		return true;
 	}
 
-	public void SharedMemoryTextureUnlock(int index)
-	{
-		Kernel32.EnterCriticalSection(ref this.threadData.DataMutex);
-		this.threadData.LockedTextures[index] = false;
-		Kernel32.LeaveCriticalSection(ref this.threadData.DataMutex);
+	private static long Now() => (long)(Stopwatch.GetTimestamp() * (1_000_000_000.0 / Stopwatch.Frequency));
 
-		Kernel32.LeaveCriticalSection(ref this.threadData.Mutexes[index]);
-	}
-
-	public void CaptureFree()
-	{
-		if (this.threadData.CopyThread != null)
-		{
-			this.threadData.CopyThreadCancellationTokenSource!.Cancel();
-			this.threadData.StopEvent!.Set();
-			this.threadData.CopyThread.Wait(500);
-			this.threadData.CopyThread.Dispose();
-			this.threadData.CopyThreadCancellationTokenSource.Dispose();
-		}
-
-		this.threadData.StopEvent?.Dispose();
-		this.threadData.CopyEvent?.Dispose();
-
-		for (int i = 0; i < this.threadData.Mutexes.Length; ++i)
-		{
-			Kernel32.DeleteCriticalSection(ref this.threadData.Mutexes[i]);
-		}
-
-		Kernel32.DeleteCriticalSection(ref this.threadData.DataMutex);
-
-		this.CaptureSignalRestart();
-		this.active = false;
-	}
+	[LibraryImport("user32.dll")]
+	private static partial IntPtr GetAncestor(IntPtr window, uint flags);
 
 	public void Dispose()
 	{
-		if (this.SharedMemoryInfo != IntPtr.Zero)
+		this.hookInfo?.Dispose();
+
+		foreach (Mutex mutex in this.TextureMutexes ?? [])
 		{
-			Kernel32.UnmapViewOfFile(this.SharedMemoryInfo);
+			mutex.Dispose();
 		}
 
-		if (this.globalHookInfo != IntPtr.Zero)
-		{
-			Kernel32.UnmapViewOfFile(this.globalHookInfo);
-		}
-
-		this.fileMapHookInfo?.Dispose();
-		this.sharedMemoryFile?.Dispose();
-		this.hookMutex?.Dispose();
-
-		foreach (Kernel32.SafeMutexHandle? mutex in this.textureMutexes)
-		{
-			mutex?.Dispose();
-		}
-
-		this.eventHookInit?.Dispose();
-		this.eventHookExit?.Dispose();
-		this.eventHookReady?.Dispose();
-		this.eventCaptureRestart?.Dispose();
-		this.eventCaptureStop?.Dispose();
+		this.initEvent?.Dispose();
+		this.exitEvent?.Dispose();
+		this.readyEvent?.Dispose();
+		this.stopEvent?.Dispose();
+		this.restartEvent?.Dispose();
+		this.hookLock.Dispose();
 	}
 }
