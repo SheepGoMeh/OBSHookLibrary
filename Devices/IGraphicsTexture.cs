@@ -8,7 +8,7 @@ namespace Sheep.OBSHookLibrary.Devices;
 public interface IGraphicsTexture: IDisposable
 {
 	/// <summary>
-	/// Texture format.
+	/// Texture format, a DXGI_FORMAT value regardless of the graphics API.
 	/// </summary>
 	public uint Format { get; }
 

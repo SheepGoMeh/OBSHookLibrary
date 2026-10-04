@@ -53,7 +53,7 @@ internal sealed unsafe class SharedMemorySession: ICaptureSession
 			data->tex2_offset = headerSize + textureSize;
 
 			this.copier = new MemoryCopier(BufferCount, hook.TextureMutexes, data, source.Height * pitch);
-			hook.Publish(CaptureType.Memory, window, source.Width, source.Height, source.Format, pitch, totalSize);
+			hook.Publish(CaptureType.Memory, window, source.Width, source.Height, this.buffers[0].Format, pitch, totalSize);
 		}
 		catch
 		{

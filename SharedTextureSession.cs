@@ -22,7 +22,7 @@ internal sealed unsafe class SharedTextureSession: ICaptureSession
 			this.sharedTexture = device.CreateTexture(source.Width, source.Height, source.Format, true);
 			this.memory = hook.CreateCaptureMemory(window, (uint)sizeof(SharedTextureData));
 			((SharedTextureData*)this.memory.Pointer)->tex_handle = (uint)(nuint)this.sharedTexture.SharedHandle;
-			hook.Publish(CaptureType.Texture, window, source.Width, source.Height, source.Format, 0,
+			hook.Publish(CaptureType.Texture, window, source.Width, source.Height, this.sharedTexture.Format, 0,
 				(uint)sizeof(SharedTextureData));
 		}
 		catch

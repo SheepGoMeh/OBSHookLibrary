@@ -25,7 +25,7 @@ public sealed class D3D11GraphicsDevice: IGraphicsDevice
 	public IGraphicsTexture CreateTexture(uint width, uint height, uint format, bool shared = false)
 	{
 		using ID3D11Texture2D texture = this.device.CreateTexture2D(
-			(Format)format,
+			DxgiFormats.ToDefaultTyped((Format)format),
 			width,
 			height,
 			1,

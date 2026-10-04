@@ -9,10 +9,12 @@ public interface IGraphicsDevice: IDisposable
 {
 	/// <summary>
 	/// Creates a texture using provided arguments.
+	/// The format is converted to its typed linear variant, the result's <see cref="IGraphicsTexture.Format"/> is
+	/// what was actually created.
 	/// </summary>
 	/// <param name="width">Texture width.</param>
 	/// <param name="height">Texture height.</param>
-	/// <param name="format">Texture format.</param>
+	/// <param name="format">Texture format, a DXGI_FORMAT value.</param>
 	/// <param name="shared">Whether the texture is shared, otherwise it is a CPU readable staging texture.</param>
 	/// <returns>The created <see cref="IGraphicsTexture"/>.</returns>
 	public IGraphicsTexture CreateTexture(uint width, uint height, uint format, bool shared = false);
