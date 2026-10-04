@@ -12,26 +12,32 @@ public sealed class D3D11GraphicsDevice: IGraphicsDevice
 	private readonly ID3D11Device device;
 	private readonly ID3D11DeviceContext context;
 
+	/// <summary>
+	/// Wraps the device, taking a reference of its own. The caller keeps ownership of the device.
+	/// </summary>
 	public D3D11GraphicsDevice(IntPtr deviceHandle)
 	{
 		this.device = new ID3D11Device(deviceHandle);
+		this.device.AddRef();
 		this.context = this.device.ImmediateContext;
 	}
 
-	public IGraphicsTexture CreateTexture(uint width, uint height, uint format, bool shared = false) =>
-		new D3D11GraphicsTexture(
-			this.device.CreateTexture2D(
-				(Format)format,
-				width,
-				height,
-				1,
-				1,
-				null,
-				shared ? BindFlags.ShaderResource : BindFlags.None,
-				shared ? ResourceOptionFlags.Shared : ResourceOptionFlags.None,
-				shared ? ResourceUsage.Default : ResourceUsage.Staging,
-				shared ? CpuAccessFlags.None : CpuAccessFlags.Read)
-		);
+	public IGraphicsTexture CreateTexture(uint width, uint height, uint format, bool shared = false)
+	{
+		using ID3D11Texture2D texture = this.device.CreateTexture2D(
+			(Format)format,
+			width,
+			height,
+			1,
+			1,
+			null,
+			shared ? BindFlags.ShaderResource : BindFlags.None,
+			shared ? ResourceOptionFlags.Shared : ResourceOptionFlags.None,
+			shared ? ResourceUsage.Default : ResourceUsage.Staging,
+			shared ? CpuAccessFlags.None : CpuAccessFlags.Read);
+
+		return new D3D11GraphicsTexture(texture);
+	}
 
 	public bool TryMap(IGraphicsTexture texture, out IntPtr data, out uint rowPitch)
 	{
@@ -57,4 +63,10 @@ public sealed class D3D11GraphicsDevice: IGraphicsDevice
 	}
 
 	private static ID3D11Texture2D Unwrap(IGraphicsTexture texture) => ((D3D11GraphicsTexture)texture).Texture;
+
+	public void Dispose()
+	{
+		this.context.Dispose();
+		this.device.Dispose();
+	}
 }

@@ -5,7 +5,7 @@ namespace Sheep.OBSHookLibrary.Devices;
 /// <summary>
 /// Graphics device interface.
 /// </summary>
-public interface IGraphicsDevice
+public interface IGraphicsDevice: IDisposable
 {
 	/// <summary>
 	/// Creates a texture using provided arguments.
