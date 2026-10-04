@@ -1,4 +1,6 @@
-﻿namespace Sheep.OBSHookLibrary.Devices;
+﻿using System;
+
+namespace Sheep.OBSHookLibrary.Devices;
 
 /// <summary>
 /// Graphics device interface.
@@ -11,36 +13,29 @@ public interface IGraphicsDevice
 	/// <param name="width">Texture width.</param>
 	/// <param name="height">Texture height.</param>
 	/// <param name="format">Texture format.</param>
-	/// <param name="shared">Whether the texture is shared.</param>
-	/// <returns><see cref="IGraphicsTexture"/> if successful, null if not.</returns>
-	public IGraphicsTexture? CreateTexture(uint width, uint height, uint format, bool shared = false);
+	/// <param name="shared">Whether the texture is shared, otherwise it is a CPU readable staging texture.</param>
+	/// <returns>The created <see cref="IGraphicsTexture"/>.</returns>
+	public IGraphicsTexture CreateTexture(uint width, uint height, uint format, bool shared = false);
 
 	/// <summary>
-	/// Maps resource for CPU access.
+	/// Maps texture for CPU read access.
 	/// </summary>
-	/// <param name="texture">Resource implementing <see cref="IGraphicsTexture"/>.</param>
-	/// <param name="subresource">Subresource if the texture is multisampled.</param>
-	/// <returns><see cref="MapResult"/> containing information of success, row pitch and data pointer.</returns>
-	public MapResult MapResource(IGraphicsTexture texture, uint subresource);
+	/// <param name="texture">Texture to map.</param>
+	/// <param name="data">Pointer to the mapped data.</param>
+	/// <param name="rowPitch">Row pitch of the mapped data.</param>
+	/// <returns>Whether the texture was mapped.</returns>
+	public bool TryMap(IGraphicsTexture texture, out IntPtr data, out uint rowPitch);
 
 	/// <summary>
-	/// Unmaps resource.
+	/// Unmaps texture.
 	/// </summary>
-	/// <param name="texture">Resource implementing <see cref="IGraphicsTexture"/>.</param>
-	/// <param name="subresource">Subresource if the texture is multisampled.</param>
-	public void UnmapResource(IGraphicsTexture texture, uint subresource);
+	/// <param name="texture">Texture to unmap.</param>
+	public void Unmap(IGraphicsTexture texture);
 
 	/// <summary>
-	/// Resolves subresource and copies data from one resource to the other.
+	/// Copies data from one texture to the other, resolving it if the source is multisampled.
 	/// </summary>
-	/// <param name="sourceTexture">Source resource implementing <see cref="IGraphicsTexture"/>.</param>
-	/// <param name="destinationTexture">Destination resource implementing <see cref="IGraphicsTexture"/>.</param>
-	public void ResolveSubresource(IGraphicsTexture sourceTexture, IGraphicsTexture destinationTexture);
-
-	/// <summary>
-	/// Copies data from one resource to the other.
-	/// </summary>
-	/// <param name="sourceTexture">Source resource implementing <see cref="IGraphicsTexture"/>.</param>
-	/// <param name="destinationTexture">Destination resource implementing <see cref="IGraphicsTexture"/>.</param>
-	public void CopyResource(IGraphicsTexture sourceTexture, IGraphicsTexture destinationTexture);
+	/// <param name="source">Source texture.</param>
+	/// <param name="destination">Destination texture.</param>
+	public void Copy(IGraphicsTexture source, IGraphicsTexture destination);
 }

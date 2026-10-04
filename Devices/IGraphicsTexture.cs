@@ -3,42 +3,32 @@
 namespace Sheep.OBSHookLibrary.Devices;
 
 /// <summary>
-/// Graphics resource interface.
+/// Graphics texture interface.
 /// </summary>
 public interface IGraphicsTexture: IDisposable
 {
 	/// <summary>
 	/// Texture format.
 	/// </summary>
-	public uint Format { get; set; }
-
-	/// <summary>
-	/// Resource usage.
-	/// </summary>
-	public uint ResourceUsage { get; set; }
+	public uint Format { get; }
 
 	/// <summary>
 	/// Whether the texture is multisampled.
 	/// </summary>
-	public bool IsMultisampled { get; set; }
+	public bool IsMultisampled { get; }
 
 	/// <summary>
 	/// Texture width.
 	/// </summary>
-	public uint Width { get; set; }
+	public uint Width { get; }
 
 	/// <summary>
 	/// Texture height.
 	/// </summary>
-	public uint Height { get; set; }
+	public uint Height { get; }
 
 	/// <summary>
-	/// Resource native handle.
+	/// Shared native handle, zero if the texture is not shared.
 	/// </summary>
-	public IntPtr ResourceHandle { get; set; }
-
-	/// <summary>
-	/// Resource shared native handle.
-	/// </summary>
-	public IntPtr SharedResourceHandle { get; }
+	public IntPtr SharedHandle { get; }
 }

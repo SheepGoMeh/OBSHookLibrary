@@ -5,42 +5,33 @@ using Vortice.DXGI;
 
 namespace Sheep.OBSHookLibrary.Devices;
 
-public class D3D11GraphicsTexture: IGraphicsTexture
+public sealed class D3D11GraphicsTexture: IGraphicsTexture
 {
-	public D3D11GraphicsTexture(ID3D11Texture2D resource) => this.Init(resource);
-
-	private void Init(ID3D11Texture2D resource)
+	public D3D11GraphicsTexture(ID3D11Texture2D texture)
 	{
-		Texture2DDescription description = resource.QueryInterface<ID3D11Texture2D>().Description;
+		Texture2DDescription description = texture.Description;
 
+		this.Texture = texture;
 		this.Format = (uint)description.Format;
 		this.IsMultisampled = description.SampleDescription.Count > 1;
-		this.Width = (uint)description.Width;
-		this.Height = (uint)description.Height;
-		this.TextureResource = resource;
-		this.DxgiResource = resource.QueryInterface<IDXGIResource>();
+		this.Width = description.Width;
+		this.Height = description.Height;
 	}
 
-	public uint Format { get; set; }
-	public uint ResourceUsage { get; set; }
-	public bool IsMultisampled { get; set; }
-	public uint Width { get; set; }
-	public uint Height { get; set; }
+	public ID3D11Texture2D Texture { get; }
+	public uint Format { get; }
+	public bool IsMultisampled { get; }
+	public uint Width { get; }
+	public uint Height { get; }
 
-	public ID3D11Texture2D? TextureResource { get; set; }
-	public IDXGIResource? DxgiResource { get; set; }
-
-	public IntPtr ResourceHandle
+	public IntPtr SharedHandle
 	{
-		get => this.TextureResource?.NativePointer ?? IntPtr.Zero;
-		set => this.Init(new ID3D11Texture2D(value));
+		get
+		{
+			using IDXGIResource resource = this.Texture.QueryInterface<IDXGIResource>();
+			return resource.SharedHandle;
+		}
 	}
 
-	public IntPtr SharedResourceHandle => this.DxgiResource?.SharedHandle ?? IntPtr.Zero;
-
-	public void Dispose()
-	{
-		this.DxgiResource?.Dispose();
-		this.TextureResource?.Dispose();
-	}
+	public void Dispose() => this.Texture.Dispose();
 }

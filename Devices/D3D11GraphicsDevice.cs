@@ -7,9 +7,16 @@ using MapFlags = Vortice.Direct3D11.MapFlags;
 
 namespace Sheep.OBSHookLibrary.Devices;
 
-public class D3D11GraphicsDevice(IntPtr deviceHandle): IGraphicsDevice
+public sealed class D3D11GraphicsDevice: IGraphicsDevice
 {
-	private readonly ID3D11Device device = new(deviceHandle);
+	private readonly ID3D11Device device;
+	private readonly ID3D11DeviceContext context;
+
+	public D3D11GraphicsDevice(IntPtr deviceHandle)
+	{
+		this.device = new ID3D11Device(deviceHandle);
+		this.context = this.device.ImmediateContext;
+	}
 
 	public IGraphicsTexture CreateTexture(uint width, uint height, uint format, bool shared = false) =>
 		new D3D11GraphicsTexture(
@@ -26,20 +33,28 @@ public class D3D11GraphicsDevice(IntPtr deviceHandle): IGraphicsDevice
 				shared ? CpuAccessFlags.None : CpuAccessFlags.Read)
 		);
 
-	public MapResult MapResource(IGraphicsTexture texture, uint subresource = 0) =>
-		this.device.ImmediateContext.Map(((D3D11GraphicsTexture)texture).TextureResource, subresource, MapMode.Read,
-			MapFlags.None, out MappedSubresource mappedSubresource).Success
-			? new MapResult(true, mappedSubresource.RowPitch, mappedSubresource.DataPointer)
-			: new MapResult(false, 0, IntPtr.Zero);
+	public bool TryMap(IGraphicsTexture texture, out IntPtr data, out uint rowPitch)
+	{
+		bool success = this.context.Map(Unwrap(texture), 0, MapMode.Read, MapFlags.None,
+			out MappedSubresource mappedSubresource).Success;
+		data = mappedSubresource.DataPointer;
+		rowPitch = mappedSubresource.RowPitch;
+		return success;
+	}
 
-	public void UnmapResource(IGraphicsTexture texture, uint subresource = 0) =>
-		this.device.ImmediateContext.Unmap(((D3D11GraphicsTexture)texture).TextureResource, subresource);
+	public void Unmap(IGraphicsTexture texture) => this.context.Unmap(Unwrap(texture), 0);
 
-	public void ResolveSubresource(IGraphicsTexture sourceTexture, IGraphicsTexture destinationTexture) =>
-		this.device.ImmediateContext.ResolveSubresource(((D3D11GraphicsTexture)destinationTexture).TextureResource, 0,
-			((D3D11GraphicsTexture)sourceTexture).TextureResource, 0, (Format)destinationTexture.Format);
+	public void Copy(IGraphicsTexture source, IGraphicsTexture destination)
+	{
+		if (source.IsMultisampled)
+		{
+			this.context.ResolveSubresource(Unwrap(destination), 0, Unwrap(source), 0, (Format)destination.Format);
+		}
+		else
+		{
+			this.context.CopyResource(Unwrap(destination), Unwrap(source));
+		}
+	}
 
-	public void CopyResource(IGraphicsTexture sourceTexture, IGraphicsTexture destinationTexture) =>
-		this.device.ImmediateContext.CopyResource(((D3D11GraphicsTexture)destinationTexture).TextureResource,
-			((D3D11GraphicsTexture)sourceTexture).TextureResource);
+	private static ID3D11Texture2D Unwrap(IGraphicsTexture texture) => ((D3D11GraphicsTexture)texture).Texture;
 }

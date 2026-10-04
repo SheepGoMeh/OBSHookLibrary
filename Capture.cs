@@ -8,7 +8,6 @@ public class Capture: IDisposable
 {
 	private readonly Hook hook;
 	private bool usingSharedTexture;
-	private bool multisampled;
 	private unsafe SharedTextureData* sharedTextureData;
 	private IGraphicsTexture? sharedTexture;
 	private readonly IGraphicsTexture?[] copySurfaces = new IGraphicsTexture?[Hook.NumberOfBuffers];
@@ -35,38 +34,25 @@ public class Capture: IDisposable
 		{
 			this.usingSharedTexture = true;
 
-			IGraphicsTexture? texture = device.CreateTexture(width, height, format, true);
-
-			if (texture == null)
-			{
-				return false;
-			}
+			IGraphicsTexture texture = device.CreateTexture(width, height, format, true);
 
 			this.sharedTexture = texture;
 			return this.hook.CaptureInitSharedTexture(ref this.sharedTextureData, width, height,
-				format, false, texture.SharedResourceHandle, windowHandle);
+				format, false, texture.SharedHandle, windowHandle);
 		}
 
 		this.usingSharedTexture = false;
 
 		for (int i = 0; i < Hook.NumberOfBuffers; ++i)
 		{
-			IGraphicsTexture? texture = device.CreateTexture(width, height, format);
-
-			if (texture == null)
-			{
-				return false;
-			}
+			IGraphicsTexture texture = device.CreateTexture(width, height, format);
 
 			this.copySurfaces[i] = texture;
 		}
 
-		MapResult result = device.MapResource(this.copySurfaces[0]!, 0);
-
-		if (result)
+		if (device.TryMap(this.copySurfaces[0]!, out _, out this.pitch))
 		{
-			this.pitch = result.RowPitch;
-			device.UnmapResource(this.copySurfaces[0]!, 0);
+			device.Unmap(this.copySurfaces[0]!);
 		}
 
 		return this.hook.CaptureInitSharedMemory(ref this.sharedMemoryData, width, height, this.pitch,
@@ -92,7 +78,7 @@ public class Capture: IDisposable
 
 				if (this.textureMapped[i])
 				{
-					device.UnmapResource(this.copySurfaces[i]!, 0);
+					device.Unmap(this.copySurfaces[i]!);
 				}
 
 				this.copySurfaces[i]!.Dispose();
@@ -102,14 +88,7 @@ public class Capture: IDisposable
 
 	public void CaptureImplementationSharedTexture(IGraphicsDevice device, IGraphicsTexture texture)
 	{
-		if (this.multisampled)
-		{
-			device.ResolveSubresource(texture, this.sharedTexture!);
-		}
-		else
-		{
-			device.CopyResource(texture, this.sharedTexture!);
-		}
+		device.Copy(texture, this.sharedTexture!);
 	}
 
 	public void CaptureImplementationSharedMemory(IGraphicsDevice device, IGraphicsTexture texture)
@@ -120,11 +99,10 @@ public class Capture: IDisposable
 		{
 			this.textureReady[nextTexture] = false;
 
-			MapResult result = device.MapResource(this.copySurfaces[nextTexture]!, 0);
-			if (result)
+			if (device.TryMap(this.copySurfaces[nextTexture]!, out IntPtr data, out _))
 			{
 				this.textureMapped[nextTexture] = true;
-				this.hook.SharedMemoryCopyData((uint)nextTexture, result.DataPointer);
+				this.hook.SharedMemoryCopyData((uint)nextTexture, data);
 			}
 		}
 
@@ -136,19 +114,12 @@ public class Capture: IDisposable
 		{
 			if (this.hook.SharedMemoryTextureDataLock(this.currentTexture))
 			{
-				device.UnmapResource(this.copySurfaces[this.currentTexture]!, 0);
+				device.Unmap(this.copySurfaces[this.currentTexture]!);
 				this.textureMapped[this.currentTexture] = false;
 				this.hook.SharedMemoryTextureUnlock(this.currentTexture);
 			}
 
-			if (this.multisampled)
-			{
-				device.ResolveSubresource(texture, this.copySurfaces[this.currentTexture]!);
-			}
-			else
-			{
-				device.CopyResource(texture, this.copySurfaces[this.currentTexture]!);
-			}
+			device.Copy(texture, this.copySurfaces[this.currentTexture]!);
 
 			this.textureReady[this.currentTexture] = true;
 		}
@@ -190,7 +161,6 @@ public class Capture: IDisposable
 
 		if (this.hook.CaptureShouldInit())
 		{
-			this.multisampled = texture.IsMultisampled;
 			this.CaptureImplementationInit(device, windowHandle, texture.Width, texture.Height, texture.Format);
 		}
 
