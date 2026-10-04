@@ -21,14 +21,14 @@ public interface IGraphicsDevice
 	/// <param name="texture">Resource implementing <see cref="IGraphicsTexture"/>.</param>
 	/// <param name="subresource">Subresource if the texture is multisampled.</param>
 	/// <returns><see cref="MapResult"/> containing information of success, row pitch and data pointer.</returns>
-	public MapResult MapResource(IGraphicsTexture texture, int subresource);
+	public MapResult MapResource(IGraphicsTexture texture, uint subresource);
 
 	/// <summary>
 	/// Unmaps resource.
 	/// </summary>
 	/// <param name="texture">Resource implementing <see cref="IGraphicsTexture"/>.</param>
 	/// <param name="subresource">Subresource if the texture is multisampled.</param>
-	public void UnmapResource(IGraphicsTexture texture, int subresource);
+	public void UnmapResource(IGraphicsTexture texture, uint subresource);
 
 	/// <summary>
 	/// Resolves subresource and copies data from one resource to the other.

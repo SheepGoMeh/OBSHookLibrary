@@ -15,8 +15,8 @@ public class D3D11GraphicsDevice(IntPtr deviceHandle): IGraphicsDevice
 		new D3D11GraphicsTexture(
 			this.device.CreateTexture2D(
 				(Format)format,
-				(int)width,
-				(int)height,
+				width,
+				height,
 				1,
 				1,
 				null,
@@ -26,13 +26,13 @@ public class D3D11GraphicsDevice(IntPtr deviceHandle): IGraphicsDevice
 				shared ? CpuAccessFlags.None : CpuAccessFlags.Read)
 		);
 
-	public MapResult MapResource(IGraphicsTexture texture, int subresource = 0) =>
+	public MapResult MapResource(IGraphicsTexture texture, uint subresource = 0) =>
 		this.device.ImmediateContext.Map(((D3D11GraphicsTexture)texture).TextureResource, subresource, MapMode.Read,
 			MapFlags.None, out MappedSubresource mappedSubresource).Success
-			? new MapResult(true, (uint)mappedSubresource.RowPitch, mappedSubresource.DataPointer)
+			? new MapResult(true, mappedSubresource.RowPitch, mappedSubresource.DataPointer)
 			: new MapResult(false, 0, IntPtr.Zero);
 
-	public void UnmapResource(IGraphicsTexture texture, int subresource = 0) =>
+	public void UnmapResource(IGraphicsTexture texture, uint subresource = 0) =>
 		this.device.ImmediateContext.Unmap(((D3D11GraphicsTexture)texture).TextureResource, subresource);
 
 	public void ResolveSubresource(IGraphicsTexture sourceTexture, IGraphicsTexture destinationTexture) =>
