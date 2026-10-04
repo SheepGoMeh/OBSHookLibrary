@@ -11,6 +11,7 @@ public sealed class Capture: IDisposable
 {
 	private Hook? hook;
 	private ICaptureSession? session;
+	private (uint Width, uint Height, uint Format) sessionShape;
 
 	/// <summary>
 	/// Whether the hook lock is held and frames can be captured.
@@ -36,7 +37,9 @@ public sealed class Capture: IDisposable
 			return;
 		}
 
-		if (this.session != null && this.hook.ShouldStop())
+		// Resizing takes a new capture, same as upstream freeing on ResizeBuffers
+		if (this.session != null &&
+			(this.hook.ShouldStop() || this.sessionShape != (texture.Width, texture.Height, texture.Format)))
 		{
 			this.Free();
 		}
@@ -48,6 +51,7 @@ public sealed class Capture: IDisposable
 				this.session = this.hook.ForceSharedMemory
 					? new SharedMemorySession(this.hook, device, texture, windowHandle)
 					: new SharedTextureSession(this.hook, device, texture, windowHandle);
+				this.sessionShape = (texture.Width, texture.Height, texture.Format);
 			}
 			catch
 			{
