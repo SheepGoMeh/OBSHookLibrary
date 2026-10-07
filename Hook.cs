@@ -24,15 +24,21 @@ internal sealed unsafe partial class Hook: IDisposable
 	private readonly EventWaitHandle initEvent;
 	private readonly SharedMemory hookInfo;
 	private readonly string keepAliveName;
+	private readonly bool takeOver;
+	private readonly EventWaitHandle? quitEvent;
+	private readonly Thread? restartWaiter;
+	private int restartPending;
 	private uint mapIdCounter;
 	private long lastKeepAliveCheck;
 	private long lastFrameTime;
 
-	private Hook(Mutex hookLock)
+	private Hook(Mutex hookLock, bool takeOver, bool otherHook)
 	{
 		int pid = Environment.ProcessId;
 		this.hookLock = hookLock;
 		this.keepAliveName = $"CaptureHook_KeepAlive{pid}";
+		this.takeOver = takeOver;
+		this.TookOver = otherHook;
 
 		try
 		{
@@ -54,10 +60,31 @@ internal sealed unsafe partial class Hook: IDisposable
 			throw;
 		}
 
-		this.restartEvent.Set();
+		if (!takeOver)
+		{
+			this.restartEvent.Set();
+			return;
+		}
+
+		// The other hook frees its capture on its next present
+		if (otherHook)
+		{
+			this.stopEvent.Set();
+		}
+
+		// A blocked waiter gets every auto reset restart before a hook that polls on present
+		this.restartPending = 1;
+		this.quitEvent = new EventWaitHandle(false, EventResetMode.ManualReset);
+		this.restartWaiter = new Thread(this.WaitForRestarts) { IsBackground = true, Name = "OBS restart waiter" };
+		this.restartWaiter.Start();
 	}
 
 	public Mutex[] TextureMutexes { get; }
+
+	/// <summary>
+	/// Whether another graphics hook owned the process when this one was created.
+	/// </summary>
+	public bool TookOver { get; }
 
 	public bool ForceSharedMemory => this.Info->force_shmem != 0;
 
@@ -66,8 +93,9 @@ internal sealed unsafe partial class Hook: IDisposable
 	/// <summary>
 	/// Acquires the hook lock and sets up the hook.
 	/// </summary>
-	/// <returns>The hook, or null if another graphics hook already owns this process.</returns>
-	public static Hook? TryCreate()
+	/// <param name="takeOver">Take the capture from another graphics hook, such as OBS's own, instead of yielding.</param>
+	/// <returns>The hook, or null if another graphics hook already owns this process and <paramref name="takeOver"/> is false.</returns>
+	public static Hook? TryCreate(bool takeOver = false)
 	{
 		Mutex hookLock;
 		bool createdNew;
@@ -81,16 +109,31 @@ internal sealed unsafe partial class Hook: IDisposable
 			return null;
 		}
 
-		if (!createdNew)
+		if (!createdNew && !takeOver)
 		{
 			hookLock.Dispose();
 			return null;
 		}
 
-		return new Hook(hookLock);
+		return new Hook(hookLock, takeOver, !createdNew);
 	}
 
-	public bool ShouldInit() => this.restartEvent.WaitOne(0) && this.IsCaptureAlive();
+	public bool ShouldInit()
+	{
+		bool restart = this.takeOver
+			? Interlocked.Exchange(ref this.restartPending, 0) == 1
+			: this.restartEvent.WaitOne(0);
+		return restart && this.IsCaptureAlive();
+	}
+
+	private void WaitForRestarts()
+	{
+		WaitHandle[] handles = [this.restartEvent, this.quitEvent!];
+		while (WaitHandle.WaitAny(handles) == 0)
+		{
+			Interlocked.Exchange(ref this.restartPending, 1);
+		}
+	}
 
 	public bool ShouldStop()
 	{
@@ -127,7 +170,18 @@ internal sealed unsafe partial class Hook: IDisposable
 		return true;
 	}
 
-	public void SignalRestart() => this.restartEvent.Set();
+	public void SignalRestart()
+	{
+		// Kept private while taking over, the other hook would take the shared event
+		if (this.takeOver)
+		{
+			Interlocked.Exchange(ref this.restartPending, 1);
+		}
+		else
+		{
+			this.restartEvent.Set();
+		}
+	}
 
 	/// <summary>
 	/// Creates the shared memory OBS reads the next capture from.
@@ -184,6 +238,15 @@ internal sealed unsafe partial class Hook: IDisposable
 
 	public void Dispose()
 	{
+		if (this.restartWaiter != null)
+		{
+			this.quitEvent!.Set();
+			this.restartWaiter.Join();
+			// The other hook, or a fresh injection, takes the capture back
+			this.restartEvent.Set();
+		}
+
+		this.quitEvent?.Dispose();
 		this.hookInfo?.Dispose();
 
 		foreach (Mutex mutex in this.TextureMutexes ?? [])

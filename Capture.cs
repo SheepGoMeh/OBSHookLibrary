@@ -19,10 +19,26 @@ public sealed class Capture: IDisposable
 	public bool IsHooked => this.hook != null;
 
 	/// <summary>
+	/// Whether another graphics hook, such as OBS's own, owned the process and its capture was taken over.
+	/// </summary>
+	public bool TookOver => this.hook?.TookOver ?? false;
+
+	/// <summary>
+	/// Whether OBS asked for shared memory capture (compatibility mode).
+	/// </summary>
+	public bool UsesSharedMemory => this.hook?.ForceSharedMemory ?? false;
+
+	/// <summary>
+	/// Whether a capture is published to OBS.
+	/// </summary>
+	public bool IsCapturing => this.session != null;
+
+	/// <summary>
 	/// Acquires the hook lock, can be retried until it succeeds.
 	/// </summary>
-	/// <returns>False if another graphics hook, such as OBS's own, already owns this process.</returns>
-	public bool TryInit() => (this.hook ??= Hook.TryCreate()) != null;
+	/// <param name="takeOver">Take the capture from another graphics hook instead of yielding to it.</param>
+	/// <returns>False if another graphics hook, such as OBS's own, already owns this process and <paramref name="takeOver"/> is false.</returns>
+	public bool TryInit(bool takeOver = false) => (this.hook ??= Hook.TryCreate(takeOver)) != null;
 
 	/// <summary>
 	/// Starts, stops and feeds the capture as OBS requests, does nothing until <see cref="TryInit"/> succeeds.
