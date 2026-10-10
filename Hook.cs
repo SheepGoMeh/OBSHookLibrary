@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Threading;
@@ -190,6 +191,64 @@ internal sealed unsafe partial class Hook: IDisposable
 		new($"CaptureHook_Texture_{(ulong)GetAncestor(window, GaRoot)}_{++this.mapIdCounter}", size);
 
 	/// <summary>
+	/// The last <see cref="CreateCaptureMemory"/> capture again under the process's other top level windows.
+	/// OBS opens the capture under the window its source matched first and only falls back to the published one, so a
+	/// plugin window of the same executable (Dalamud viewports) would otherwise get the window's own capture, or none.
+	/// An existing mapping of that name, left by another hook, is opened and overwritten.
+	/// </summary>
+	public List<SharedMemory> CreateCaptureAliases(IntPtr window, uint size)
+	{
+		IntPtr root = GetAncestor(window, GaRoot);
+		List<SharedMemory> aliases = [];
+		foreach (IntPtr other in ProcessWindows())
+		{
+			if (other == root)
+			{
+				continue;
+			}
+
+			try
+			{
+				aliases.Add(new SharedMemory($"CaptureHook_Texture_{(ulong)other}_{this.mapIdCounter}", size));
+			}
+			catch (Exception)
+			{
+				// Taken by something else with another size, OBS falls back to the published window there
+			}
+		}
+
+		return aliases;
+	}
+
+	private static List<IntPtr> ProcessWindows()
+	{
+		List<IntPtr> windows = [];
+		GCHandle handle = GCHandle.Alloc(windows);
+		try
+		{
+			EnumWindows(&CollectWindow, GCHandle.ToIntPtr(handle));
+		}
+		finally
+		{
+			handle.Free();
+		}
+
+		return windows;
+	}
+
+	[UnmanagedCallersOnly]
+	private static int CollectWindow(IntPtr window, IntPtr state)
+	{
+		GetWindowThreadProcessId(window, out uint pid);
+		if (pid == Environment.ProcessId)
+		{
+			((List<IntPtr>)GCHandle.FromIntPtr(state).Target!).Add(window);
+		}
+
+		return 1;
+	}
+
+	/// <summary>
 	/// Publishes the capture created with <see cref="CreateCaptureMemory"/> and tells OBS it is ready.
 	/// </summary>
 	public void Publish(CaptureType type, IntPtr window, uint cx, uint cy, uint format, uint pitch, uint mapSize)
@@ -235,6 +294,13 @@ internal sealed unsafe partial class Hook: IDisposable
 
 	[LibraryImport("user32.dll")]
 	private static partial IntPtr GetAncestor(IntPtr window, uint flags);
+
+	[LibraryImport("user32.dll")]
+	[return: MarshalAs(UnmanagedType.Bool)]
+	private static partial bool EnumWindows(delegate* unmanaged<IntPtr, IntPtr, int> callback, IntPtr state);
+
+	[LibraryImport("user32.dll")]
+	private static partial uint GetWindowThreadProcessId(IntPtr window, out uint processId);
 
 	public void Dispose()
 	{
